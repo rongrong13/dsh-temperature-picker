@@ -1,0 +1,6 @@
+# dsh-temperature-picker bundle 层：profile 在 dsh.profile.bundles 里列出本包时应用。
+# 只插入一行宿主插件（无默认 config = 跟随提供方默认温度）；
+# 界面按钮的写入会由 settings 服务持久化为 profile cordis.patch.yml 中该行的 config 覆盖。
+- insert:
+    - id: temperature-picker
+      name: dsh-temperature-picker
