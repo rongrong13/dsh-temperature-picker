@@ -1,6 +1,6 @@
 {
   "name": "dsh-temperature-picker",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DeepSeek Harness plugin: a temperature picker button left of the model selector — ticked slider (0–1.2, step 0.1) plus range-checked input, applied to every provider via the agent/request waterfall, persisted through the profile patch.",
   "keywords": [
     "dsh-plugin",
@@ -11,6 +11,9 @@
     "sampling"
   ],
   "author": "ChurSu",
+  "contributors": [
+    "rongrong13"
+  ],
   "license": "MIT",
   "type": "module",
   "main": "./index.js",
@@ -31,24 +34,28 @@
     "client": {
       "platform": "web",
       "inject": [
-        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-api-remotes",
         "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-conversation"
       ]
     }
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ChurSu/dsh-temperature-picker.git"
+    "url": "git+https://github.com/rongrong13/dsh-temperature-picker.git"
   },
   "bugs": {
-    "url": "https://github.com/ChurSu/dsh-temperature-picker/issues"
+    "url": "https://github.com/rongrong13/dsh-temperature-picker/issues"
   },
-  "homepage": "https://github.com/ChurSu/dsh-temperature-picker#readme",
+  "homepage": "https://github.com/rongrong13/dsh-temperature-picker#readme",
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.4"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

@@ -6,6 +6,8 @@
 
 ![截图](assets/screenshot.png)
 
+> 本仓库是 [ChurSu/dsh-temperature-picker](https://github.com/ChurSu/dsh-temperature-picker) 的 fork，已按 **DSH 0.2.2-rc.x** 的运行时契约完成适配（见[适配说明](#针对-dsh-022-rcx-的适配)）。
+
 ## 功能
 
 - 🎚️ 带刻度滑条（0–1.2，步长 0.1；0 / 0.3 / 0.7 / 1 / 1.2 主刻度标注），松手即生效
@@ -15,27 +17,28 @@
 - ↩️ 「恢复默认」一键取消覆盖（不发送 temperature，跟随提供方默认）
 - 🌐 作用于所有 provider（官方 DeepSeek 与 pi-ai 第三方路由），拦截发生在 provider 路由之前
 - 💬 同一轮对话中间可随时修改，对下一次模型请求生效
+- 🩺 状态自检：配置未注册 / profile 只读 / 与他人写入冲突时给出明确提示并禁用控件
 
 ## 安装
 
-前提：已在使用 DeepSeek Harness（v0.2.1-rc.3 测试通过）。
+前提：DeepSeek Harness v0.2.2-rc.x（在 0.2.2-rc.3 上实测通过）。
 
-**npm（发布后）：**
-
-```sh
-dsh plugin --profile web add dsh-temperature-picker
-```
-
-**GitHub：**
+**GitHub（本 fork）：**
 
 ```sh
-dsh plugin --profile web add github:ChurSu/dsh-temperature-picker
+dsh plugin --profile web add github:rongrong13/dsh-temperature-picker
 ```
 
 **桌面版（desktop profile 由 Electron 管理，用自带 CLI）：**
 
 ```sh
-"<安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add dsh-temperature-picker
+"<安装目录>\resources\runtime\cli\bin\dsh.cmd" plugin --profile desktop add github:rongrong13/dsh-temperature-picker
+```
+
+**上游版本（未适配 0.2.2）：**
+
+```sh
+dsh plugin --profile web add github:ChurSu/dsh-temperature-picker
 ```
 
 也可以在界面的「插件」页搜索安装。安装后刷新页面（或重启应用），输入框左下即出现「温度」按钮。
@@ -55,11 +58,28 @@ dsh plugin --profile web add github:ChurSu/dsh-temperature-picker
 
 改动温度属于请求 envelope 变化，会记录一条新的 `request/header`（reason: `change`）并开启新的 request series；消息历史不受影响。
 
+## 针对 DSH 0.2.2-rc.x 的适配
+
+上游 v0.1.0 声明「在 0.2.1-rc.3 测试通过」。对照 0.2.2-rc.3 的源码后做了以下改动：
+
+| 位置 | 改动 | 原因 |
+| --- | --- | --- |
+| `package.json` | `dsh.client.inject` 移除 `@deepseek-ai/dsh-client-runtime` | 0.2.2 的客户端包集合里没有这个包（无效声明会被静默跳过，等于白写） |
+| `package.json` | `inject` 改为 `dsh-api-remotes` / `dsh-client-connection` / `dsh-client-locale` / `dsh-client-ui-conversation` | 与内置插件（如 `client-ui-permission-presets`）一致的真实依赖集合 |
+| `client.js` | 冲突判定改为认 `settings/conflict` 错误码（保留旧文案匹配） | 0.2.2 的写入失败以 `RemoteError {code, details}` 返回，`code: 'settings/conflict'` 才是 revision 冲突；只匹配英文文案时重试永不触发 |
+| `client.js` | 只读判定用 `describe()` 返回值**顶层**的 `writable` | 0.2.2 的 `writable` 在 `SettingsDescribeValue` 顶层，不在单个 namespace 里 |
+| `client.js` | 新增 `unknown / ready / readonly / missing` 状态机 | 插件未装成 bundle 或 profile 只读时，给出可诊断的提示而不是静默无反应 |
+| `client.js` | `useSyncExternalStore` 不再条件调用 | 避免 locale 服务缺失时 hook 顺序不一致 |
+| `client.js` | 滑条方向键 320ms 防抖 | 键盘连按原本每次 `keyup` 都落一次盘 |
+| `client.js` | 隐藏 number 输入的原生 spinner | 暗色主题下两个小箭头与圆角输入框冲突 |
+| `index.js` | 温度先做区间/有限性校验（`NaN`、越界视为未设置） | 避免把非法值透传给 provider 导致请求被拒 |
+| `index.js` | 复制 `LlmCallConfig` 后再改 | `next()` 返回的对象可能被上游折叠/缓存共享，就地改写会污染快照 |
+
 ## 注意事项
 
 - **不同模型对温度的支持不同**：例如 DeepSeek 官方路由在 thinking（推理）开启时接受但**忽略** temperature。报错时改回模型支持的取值或恢复默认即可。
 - 未设置时插件不发送 `temperature` 字段，行为与未安装插件完全一致。
-- 本插件为个人工具，按 MIT 发布；DSH 处于开发者预览期，上游 API 变动可能导致插件需要适配（见 package.json 的 peerDependencies）。
+- DSH 处于开发者预览期，上游 API 变动可能导致插件需要再次适配（见 package.json 的 peerDependencies）。
 
 ## 目录结构
 

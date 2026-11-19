@@ -6,6 +6,11 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
     const React = require("react");
 
+    // 服务名与 DSH 0.2.2-rc.x 的实际命名保持一致：
+    //   slots            —— dsh-client-ui-slots 的槽位注册表（经 ui-conversation 暴露）
+    //   remote           —— dsh-client-connection 的远程门面
+    //   remote.settings  —— dsh-api-settings-controller 的 settings 命名空间
+    //   locale           —— dsh-client-locale，getSnapshot(): { active, locales, revision }
     const inject = ["slots", "remote", "remote.settings", "locale"];
     // 与宿主端 loader 行 id 一致：settings 服务以条目 id 作为命名空间
     const NS = 'temperature-picker';
@@ -30,6 +35,24 @@ window.__ModuleLoader__.load({
       return 'calc(' + (THUMB / 2) + 'px + (100% - ' + THUMB + 'px) * ' + p.toFixed(4) + ')';
     };
 
+    // ── 设置写入的冲突判定 ──────────────────────────────────────────────────
+    // DSH 0.2.2 的 settings 写入失败以 RemoteError 形式返回：
+    //   { code, message, details } —— code 'settings/conflict' 表示 revision 在读取后
+    //   被推进（见 dsh-api-settings-controller/src/types.ts），此时应重读 revision 重放。
+    // 旧版仅靠 message 文本判断，文案一变重试就永不触发，这里同时认 code 与文本。
+    const isConflict = (error) => {
+      if (!error) return false;
+      const code = typeof error === 'string' ? '' : String(error.code || '');
+      const message = typeof error === 'string' ? error : String((error && error.message) || '');
+      return code === 'settings/conflict' || /changed since it was read|settings\/conflict/.test(message);
+    };
+    const describeError = (error) => {
+      if (!error) return 'unknown error';
+      const code = typeof error === 'string' ? '' : String(error.code || '');
+      const message = typeof error === 'string' ? error : String((error && error.message) || error);
+      return code && message.indexOf(code) === -1 ? code + ': ' + message : message;
+    };
+
     // ── i18n：跟随 DSH 界面语言（zh / en，en 为兜底）────────────────────────
     const DICTS = {
       zh: {
@@ -50,6 +73,8 @@ window.__ModuleLoader__.load({
         'out-of-range': '超出范围：仅支持 {min} – {max}',
         'status-override': '覆盖生效中：{value}',
         'status-default': '默认（跟随提供方）',
+        'status-readonly': '当前 profile 的配置为只读，无法写入',
+        'status-unregistered': '配置条目未注册：请确认插件已作为 bundle 装入当前 profile',
         'loading': '读取状态中…',
       },
       en: {
@@ -70,6 +95,8 @@ window.__ModuleLoader__.load({
         'out-of-range': 'Out of range: only {min} – {max} is supported',
         'status-override': 'Override active: {value}',
         'status-default': 'Default (follows the provider)',
+        'status-readonly': 'This profile is read-only; nothing can be written',
+        'status-unregistered': 'Config entry not registered — is the plugin installed as a bundle in this profile?',
         'loading': 'Loading…',
       },
     };
@@ -96,12 +123,14 @@ window.__ModuleLoader__.load({
       .dtp-mark.major i{width:2px;height:7px;border-radius:1px;opacity:.9}
       .dtp-mark span{font-size:10px;line-height:12px;color:var(--dsw-alias-label-primary);font-variant-numeric:tabular-nums}
       .dtp-row{display:flex;align-items:center;gap:12px;margin-top:10px}
-      .dtp-num{width:72px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);border-radius:8px;padding:5px 8px;font-size:12px;font-variant-numeric:tabular-nums}
+      .dtp-num{width:72px;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);border-radius:8px;padding:5px 8px;font-size:12px;font-variant-numeric:tabular-nums;-moz-appearance:textfield;appearance:textfield}
+      .dtp-num::-webkit-outer-spin-button,.dtp-num::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
       .dtp-num:focus{outline:none;border-color:var(--dsw-alias-brand-primary)}
       .dtp-btn{border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);border-radius:8px;padding:5px 12px;cursor:pointer;font-size:12px}
-      .dtp-btn:hover{background:var(--dsw-alias-interactive-bg-hover)}
+      .dtp-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
       .dtp-btn.primary{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary)}
-      .dtp-err{font-size:11px;color:#e25252}
+      .dtp-btn:disabled,.dtp-slider:disabled,.dtp-num:disabled{opacity:.5;cursor:not-allowed}
+      .dtp-err{font-size:11px;color:#e25252;white-space:pre-wrap;word-break:break-all}
       .dtp-status{min-height:16px;font-size:11px;opacity:.8;white-space:pre-wrap;word-break:break-all;color:var(--dsw-alias-label-secondary)}
     `;
 
@@ -115,13 +144,18 @@ window.__ModuleLoader__.load({
       );
     }
 
+    const noopSubscribe = () => () => {};
+
     function Panel(props) {
       const remote = props.remote;
       const t = props.t;
-      // 语言切换时重渲染（locale snapshot revision 单调递增）
-      if (props.localeSubscribe && props.localeRevision) {
-        React.useSyncExternalStore(props.localeSubscribe, props.localeRevision);
-      }
+      // 语言切换时重渲染（locale snapshot revision 单调递增）。
+      // 始终调用，不在条件分支里调 hook——locale 缺失时用恒定空实现兜底。
+      React.useSyncExternalStore(
+        props.localeSubscribe || noopSubscribe,
+        props.localeRevision || (() => 0),
+      );
+
       const [open, setOpen] = React.useState(false);
       const [current, setCurrent] = React.useState(undefined); // number | undefined（undefined = 跟随默认）
       const [draft, setDraft] = React.useState(0.7);           // 滑条/输入框的本地草稿
@@ -129,55 +163,88 @@ window.__ModuleLoader__.load({
       const [status, setStatus] = React.useState('');
       const [error, setError] = React.useState('');
       const [loaded, setLoaded] = React.useState(false);
+      const [available, setAvailable] = React.useState('unknown'); // unknown | ready | readonly | missing
+      const [busy, setBusy] = React.useState(false);
+      const keyTimer = React.useRef(null);
 
+      React.useEffect(() => () => { if (keyTimer.current) clearTimeout(keyTimer.current); }, []);
+
+      // 读取当前 namespace：describe() 返回 { writable, hasDocument, namespaces[] }；
+      // 每个 namespace 携带 { ns, value, revision, schema }（见 dsh-api-settings-controller）。
       const fetchNs = React.useCallback(async () => {
         const res = await remote.settings.describe();
-        if (res && res.ok) {
-          const ns = (res.value.namespaces || []).find((n) => n.ns === NS);
-          return ns || null;
+        if (!res || !res.ok) {
+          return { ns: null, writable: false, error: res && res.error ? res.error : new Error('settings.describe failed') };
         }
-        return null;
+        const view = res.value || {};
+        const ns = (view.namespaces || []).find((n) => n.ns === NS) || null;
+        return { ns, writable: view.writable !== false, error: null };
       }, [remote]);
 
       const load = React.useCallback(() => {
-        fetchNs().then((ns) => {
-          if (ns) {
-            const v = ns.value || {};
+        fetchNs().then((r) => {
+          if (r.error) {
+            setAvailable('missing');
+            setError(t('failed', { message: describeError(r.error) }));
+          } else if (!r.ns) {
+            // 插件未被装成 profile bundle（或宿主端条目 id 变了）：配置命名空间不存在。
+            setAvailable('missing');
+          } else {
+            setAvailable(r.writable ? 'ready' : 'readonly');
+            const v = r.ns.value || {};
             const val = typeof v.temperature === 'number' ? v.temperature : undefined;
             setCurrent(val);
             if (typeof val === 'number') { setDraft(val); setInputText(fmt(val)); }
           }
           setLoaded(true);
-        }).catch(() => setLoaded(true));
-      }, [fetchNs]);
+        }).catch((e) => {
+          setAvailable('missing');
+          setError(t('failed', { message: describeError(e) }));
+          setLoaded(true);
+        });
+      }, [fetchNs, t]);
 
       React.useEffect(() => { load(); }, [load]);
 
-      // 写入：每次写前重新拉取最新 revision；遇并发冲突（revision 已被推进）自动重试一次
+      // 写入：每次写前重新拉取最新 revision；遇到 settings/conflict 自动重读并重放一次
       const write = async (ops, okText) => {
+        setBusy(true);
         setStatus(t('saving'));
         for (let attempt = 0; attempt < 2; attempt++) {
           try {
             const fresh = await fetchNs();
-            const rev = fresh ? fresh.revision : undefined;
+            if (fresh.error) {
+              setError(t('failed', { message: describeError(fresh.error) }));
+              setStatus('');
+              setBusy(false);
+              return false;
+            }
+            const rev = fresh.ns ? fresh.ns.revision : undefined;
             const res = await remote.settings.mutate(NS, ops, rev);
             if (res && res.ok) {
+              setError('');
               setStatus(okText);
+              setBusy(false);
               load();
               return true;
             }
-            const msg = (res && res.error && res.error.message) || 'unknown error';
-            if (attempt === 0 && /changed since it was read/.test(msg)) continue;
-            setStatus(t('failed', { message: msg }));
+            const failure = res && res.error;
+            if (attempt === 0 && isConflict(failure)) continue;
+            setError(t('failed', { message: describeError(failure) }));
+            setStatus('');
+            setBusy(false);
             return false;
           } catch (e) {
-            const msg = String((e && e.message) || e);
-            if (attempt === 0 && /changed since it was read/.test(msg)) continue;
-            setStatus(t('failed', { message: msg }));
+            if (attempt === 0 && isConflict(e)) continue;
+            setError(t('failed', { message: describeError(e) }));
+            setStatus('');
+            setBusy(false);
             return false;
           }
         }
-        setStatus(t('conflict'));
+        setError(t('conflict'));
+        setStatus('');
+        setBusy(false);
         return false;
       };
 
@@ -202,7 +269,22 @@ window.__ModuleLoader__.load({
         commitValue(v);
       };
 
+      // 滑条键盘操作会连续触发 keyup：防抖后再写，避免每按一次都落一次盘。
+      const commitDraftSoon = (v) => {
+        if (keyTimer.current) clearTimeout(keyTimer.current);
+        keyTimer.current = setTimeout(() => { keyTimer.current = null; commitValue(v); }, 320);
+      };
+
       const hasOverride = typeof current === 'number';
+      const disabled = busy || available !== 'ready';
+
+      const statusText = !loaded
+        ? t('loading')
+        : available === 'missing'
+          ? t('status-unregistered')
+          : available === 'readonly'
+            ? t('status-readonly')
+            : (status || (hasOverride ? t('status-override', { value: fmt(current) }) : t('status-default')));
 
       return React.createElement('div', { className: 'dtp-anchor' },
         React.createElement('button', {
@@ -224,10 +306,10 @@ window.__ModuleLoader__.load({
           React.createElement('div', { className: 'dtp-slider-wrap' },
             React.createElement('input', {
               type: 'range', className: 'dtp-slider', min: String(MIN), max: String(MAX), step: String(STEP),
-              value: draft,
+              value: draft, disabled,
               onChange: (e) => { const v = Number(e.target.value); setDraft(v); setInputText(fmt(v)); },
-              onPointerUp: () => commitValue(draft),
-              onKeyUp: (e) => { if (e.key && e.key.startsWith('Arrow')) commitValue(draft); },
+              onPointerUp: () => { if (!disabled) commitValue(draft); },
+              onKeyUp: (e) => { if (!disabled && e.key && e.key.indexOf('Arrow') === 0) commitDraftSoon(draft); },
             }),
             React.createElement('div', { className: 'dtp-marks' },
               TICKS.map((v) => {
@@ -246,16 +328,16 @@ window.__ModuleLoader__.load({
           React.createElement('div', { className: 'dtp-row' },
             React.createElement('input', {
               type: 'number', className: 'dtp-num', min: String(MIN), max: String(MAX), step: String(STEP),
-              value: inputText,
+              value: inputText, disabled,
               onChange: (e) => setInputText(e.target.value),
-              onKeyDown: (e) => { if (e.key === 'Enter') commitInput(); },
-              onBlur: () => { if (inputText.trim() !== '') commitInput(); },
+              onKeyDown: (e) => { if (e.key === 'Enter' && !disabled) commitInput(); },
+              onBlur: () => { if (!disabled && inputText.trim() !== '') commitInput(); },
             }),
-            React.createElement('button', { className: 'dtp-btn primary', onClick: commitInput }, t('set')),
-            React.createElement('button', { className: 'dtp-btn', onClick: clear }, t('reset'))
+            React.createElement('button', { className: 'dtp-btn primary', disabled, onClick: commitInput }, t('set')),
+            React.createElement('button', { className: 'dtp-btn', disabled, onClick: clear }, t('reset'))
           ),
           error ? React.createElement('div', { className: 'dtp-err' }, error) : null,
-          React.createElement('div', { className: 'dtp-status' }, loaded ? (status || (hasOverride ? t('status-override', { value: fmt(current) }) : t('status-default'))) : t('loading'))
+          React.createElement('div', { className: 'dtp-status' }, statusText)
         ) : null
       );
     }
@@ -277,15 +359,18 @@ window.__ModuleLoader__.load({
         return lang.startsWith('zh') ? DICTS.zh : DICTS.en;
       };
       const t = (key, params) => {
-        const s = pickDict()[key] ?? DICTS.en[key] ?? key;
+        const dict = pickDict();
+        const s = dict[key] !== undefined ? dict[key] : (DICTS.en[key] !== undefined ? DICTS.en[key] : key);
         return params ? s.replace(/\{(\w+)\}/g, (m, name) => (name in params ? String(params[name]) : m)) : s;
       };
       // 仅订阅语言切换用于重渲染（订阅不改动宿主状态，无竞态）
-      let localeSubscribe = null;
-      let localeRevision = null;
+      let localeSubscribe = noopSubscribe;
+      let localeRevision = () => 0;
       if (ctx.locale) {
         localeSubscribe = (cb) => ctx.locale.subscribe(cb);
-        localeRevision = () => ctx.locale.getSnapshot().revision;
+        localeRevision = () => {
+          try { return ctx.locale.getSnapshot().revision } catch { return 0 }
+        };
       }
 
       const tagId = 'dsh-temperature-picker/styles';
