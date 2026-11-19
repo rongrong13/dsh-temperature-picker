@@ -43,6 +43,8 @@ dsh plugin --profile web add github:ChurSu/dsh-temperature-picker
 
 Or use the in-app Plugins page. Refresh the page (or restart the app) after installing; a「温度」/ temperature button appears at the bottom-left of the composer.
 
+> Installing the package alone is not enough: it must also appear in the profile's `dsh.profile.bundles` list (bundles are ordered patch layers). The desktop app reconciles that step itself; a plain CLI profile needs the entry added by hand, then a restart.
+
 ## Usage
 
 1. Click the temperature button left of the model selector.

@@ -43,6 +43,8 @@ dsh plugin --profile web add github:ChurSu/dsh-temperature-picker
 
 也可以在界面的「插件」页搜索安装。安装后刷新页面（或重启应用），输入框左下即出现「温度」按钮。
 
+> 只装包不会自动生效：包还必须出现在 profile `package.json` 的 `dsh.profile.bundles` 列表里（bundles 是有序的 patch 层）。桌面版应用在安装后会自行 reconcile 这一步；纯 CLI profile 需要手动加入，然后重启。
+
 ## 使用
 
 1. 点击输入框左下角的「温度」按钮（模型选择按钮左侧）。
